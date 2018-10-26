@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import logging
 from timeit import default_timer
 from django.urls import resolve
@@ -76,17 +77,23 @@ class WavefrontMiddleware(MiddlewareMixin):
         entity_name = self.get_entity_name(request)
         func_name = resolve(request.path_info).func.__name__
         module_name = resolve(request.path_info).func.__module__
-        reg.counter(
+        self.update_gauge(
+            registry=reg,
             key=self.get_metric_name(entity_name, request) + ".inflight",
             tags=self.get_tags_map(
                 module_name=module_name,
-                func_name=func_name)).inc()
-        reg.counter(
+                func_name=func_name),
+            val=1
+        )
+        self.update_gauge(
+            registry=reg,
             key="total_requests.inflight",
             tags=self.get_tags_map(
                 cluster=CLUSTER,
                 service=SERVICE,
-                shard=SHARD)).inc()
+                shard=SHARD),
+            val=1
+        )
 
     def process_response(self, request, response):
         if not MIDDLEWARE_ENABLED:
@@ -95,17 +102,23 @@ class WavefrontMiddleware(MiddlewareMixin):
         func_name = resolve(request.path_info).func.__name__
         module_name = resolve(request.path_info).func.__module__
 
-        reg.counter(
+        self.update_gauge(
+            registry=reg,
             key=self.get_metric_name(entity_name, request) + ".inflight",
             tags=self.get_tags_map(
                 module_name=module_name,
-                func_name=func_name)).dec()
-        reg.counter(
+                func_name=func_name),
+            val=-1
+        )
+        self.update_gauge(
+            registry=reg,
             key="total_requests.inflight",
             tags=self.get_tags_map(
                 cluster=CLUSTER,
                 service=SERVICE,
-                shard=SHARD)).dec()
+                shard=SHARD),
+            val=-1
+        )
 
         response_metric_key = self.get_metric_name(entity_name, request,
                                                    response)
@@ -285,3 +298,11 @@ class WavefrontMiddleware(MiddlewareMixin):
     @staticmethod
     def is_error_status_code(response):
         return 400 <= response.status_code <= 599
+
+    @staticmethod
+    def update_gauge(registry, key, tags, val):
+        gauge = registry.gauge(key=key, tags=tags)
+        cur_val = gauge.get_value()
+        if math.isnan(cur_val):
+            cur_val = 0
+        gauge.set_value(cur_val + val)
