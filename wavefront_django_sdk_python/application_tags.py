@@ -1,3 +1,7 @@
+from wavefront_django_sdk_python.constants import APPLICATION_TAG_KEY, \
+    SERVICE_TAG_KEY, CLUSTER_TAG_KEY, SHARD_TAG_KEY, NULL_TAG_VAL
+
+
 class ApplicationTags:
 
     def __init__(self, application, service, cluster=None, shard=None,
@@ -33,3 +37,10 @@ class ApplicationTags:
     @property
     def custom_tags(self):
         return self._custom_tags
+
+    def get_as_list(self):
+        tags = [(APPLICATION_TAG_KEY, self.application),
+                (SERVICE_TAG_KEY, self.service),
+                (CLUSTER_TAG_KEY, self.cluster or NULL_TAG_VAL),
+                (SHARD_TAG_KEY, self.shard or NULL_TAG_VAL)]
+        return tags

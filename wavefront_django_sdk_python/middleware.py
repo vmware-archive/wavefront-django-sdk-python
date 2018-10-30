@@ -5,6 +5,8 @@ import logging
 from timeit import default_timer
 from django.urls import resolve
 from django.conf import settings
+from django_opentracing import DjangoTracer
+from django_opentracing.tracer import initialize_global_tracer
 from wavefront_pyformance.wavefront_reporter import WavefrontReporter
 from wavefront_pyformance.tagged_registry import TaggedRegistry
 from wavefront_pyformance.delta import delta_counter
@@ -21,55 +23,54 @@ except ImportError:
     # Not required for Django <= 1.9, see:
     MiddlewareMixin = object
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def get_conf(key):
-    if hasattr(settings, key):
-        return settings.__getattr__(key)
-    if key in os.environ:
-        return os.environ[key]
-    return None
-
-
-MIDDLEWARE_ENABLED = False
-try:
-    reporter = get_conf('WF_REPORTER')
-    application_tags = get_conf('APPLICATION_TAGS')
-    if not isinstance(reporter, WavefrontReporter):
-        raise AttributeError(
-            "WF_REPORTER not correctly configured in settings.py!")
-    elif not isinstance(application_tags, ApplicationTags):
-        raise AttributeError(
-            "APPLICATION_TAGS not correctly configured in settings.py!")
-    else:
-        APPLICATION = application_tags.application or NULL_TAG_VAL
-        CLUSTER = application_tags.cluster or NULL_TAG_VAL
-        SERVICE = application_tags.service or NULL_TAG_VAL
-        SHARD = application_tags.shard or NULL_TAG_VAL
-        reporter.prefix = REPORTER_PREFIX
-        reg = TaggedRegistry()
-        reporter.registry = reg
-        reporter.start()
-        heartbeaterService = HeartbeaterService(
-            wavefront_client=reporter.wavefront_client,
-            application_tags=application_tags,
-            component=DJANGO_COMPONENT,
-            source=reporter.source,
-            reporting_interval_seconds=HEART_BEAT_INTERVAL)
-        MIDDLEWARE_ENABLED = True
-except AttributeError as e:
-    logger.warning(e)
-finally:
-    if not MIDDLEWARE_ENABLED:
-        logger.warning("Wavefront Django Middleware not enabled!")
-
 
 class WavefrontMiddleware(MiddlewareMixin):
 
+    def __init__(self, get_response=None):
+        super().__init__()
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+        self.MIDDLEWARE_ENABLED = False
+        try:
+            self.reporter = self.get_conf('WF_REPORTER')
+            self.application_tags = self.get_conf('APPLICATION_TAGS')
+            self.tracer = self.get_conf('OPENTRACING_TRACER')
+            if not isinstance(self.reporter, WavefrontReporter):
+                raise AttributeError(
+                    "WF_REPORTER not correctly configured!")
+            elif not isinstance(self.application_tags, ApplicationTags):
+                raise AttributeError(
+                    "APPLICATION_TAGS not correctly configured!")
+            elif not isinstance(self.tracer, DjangoTracer):
+                raise AttributeError(
+                    "OPENTRACING_TRACER not correctly configured!")
+            else:
+                self.APPLICATION = self.application_tags.application or \
+                                   NULL_TAG_VAL
+                self.CLUSTER = self.application_tags.cluster or NULL_TAG_VAL
+                self.SERVICE = self.application_tags.service or NULL_TAG_VAL
+                self.SHARD = self.application_tags.shard or NULL_TAG_VAL
+                self.reporter.prefix = REPORTER_PREFIX
+                self.reg = TaggedRegistry()
+                self.reporter.registry = self.reg
+                self.reporter.start()
+                self.heartbeaterService = HeartbeaterService(
+                    wavefront_client=self.reporter.wavefront_client,
+                    application_tags=self.application_tags,
+                    component=DJANGO_COMPONENT,
+                    source=self.reporter.source,
+                    reporting_interval_seconds=HEART_BEAT_INTERVAL)
+                self.get_response = get_response
+                initialize_global_tracer()
+                self.MIDDLEWARE_ENABLED = True
+        except AttributeError as e:
+            self.logger.warning(e)
+        finally:
+            if not self.MIDDLEWARE_ENABLED:
+                self.logger.warning("Wavefront Django Middleware not enabled!")
+
     def process_view(self, request, view_func, view_args, view_kwargs):
-        if not MIDDLEWARE_ENABLED:
+        if not self.MIDDLEWARE_ENABLED:
             return
         request.wf_start_timestamp = default_timer()
         request.wf_cpu_nanos = time.clock()
@@ -78,7 +79,7 @@ class WavefrontMiddleware(MiddlewareMixin):
         func_name = resolve(request.path_info).func.__name__
         module_name = resolve(request.path_info).func.__module__
         self.update_gauge(
-            registry=reg,
+            registry=self.reg,
             key=self.get_metric_name(entity_name, request) + ".inflight",
             tags=self.get_tags_map(
                 module_name=module_name,
@@ -86,24 +87,33 @@ class WavefrontMiddleware(MiddlewareMixin):
             val=1
         )
         self.update_gauge(
-            registry=reg,
+            registry=self.reg,
             key="total_requests.inflight",
             tags=self.get_tags_map(
-                cluster=CLUSTER,
-                service=SERVICE,
-                shard=SHARD),
+                cluster=self.CLUSTER,
+                service=self.SERVICE,
+                shard=self.SHARD),
             val=1
         )
+        if self.tracer:
+            if not self.tracer._trace_all:
+                return None
+            if hasattr(settings, 'OPENTRACING_TRACED_ATTRIBUTES'):
+                traced_attributes = getattr(settings,
+                                            'OPENTRACING_TRACED_ATTRIBUTES')
+            else:
+                traced_attributes = []
+            self.tracer._apply_tracing(request, view_func, traced_attributes)
 
     def process_response(self, request, response):
-        if not MIDDLEWARE_ENABLED:
+        if not self.MIDDLEWARE_ENABLED:
             return response
         entity_name = self.get_entity_name(request)
         func_name = resolve(request.path_info).func.__name__
         module_name = resolve(request.path_info).func.__module__
 
         self.update_gauge(
-            registry=reg,
+            registry=self.reg,
             key=self.get_metric_name(entity_name, request) + ".inflight",
             tags=self.get_tags_map(
                 module_name=module_name,
@@ -111,12 +121,12 @@ class WavefrontMiddleware(MiddlewareMixin):
             val=-1
         )
         self.update_gauge(
-            registry=reg,
+            registry=self.reg,
             key="total_requests.inflight",
             tags=self.get_tags_map(
-                cluster=CLUSTER,
-                service=SERVICE,
-                shard=SHARD),
+                cluster=self.CLUSTER,
+                service=self.SERVICE,
+                shard=self.SHARD),
             val=-1
         )
 
@@ -124,52 +134,52 @@ class WavefrontMiddleware(MiddlewareMixin):
                                                    response)
 
         complete_tags_map = self.get_tags_map(
-            cluster=CLUSTER,
-            service=SERVICE,
-            shard=SHARD,
+            cluster=self.CLUSTER,
+            service=self.SERVICE,
+            shard=self.SHARD,
             module_name=module_name,
             func_name=func_name
         )
 
         aggregated_per_shard_map = self.get_tags_map(
-            cluster=CLUSTER,
-            service=SERVICE,
-            shard=SHARD,
+            cluster=self.CLUSTER,
+            service=self.SERVICE,
+            shard=self.SHARD,
             module_name=module_name,
             func_name=func_name,
             source=WAVEFRONT_PROVIDED_SOURCE)
 
         overall_aggregated_per_source_map = self.get_tags_map(
-            cluster=CLUSTER,
-            service=SERVICE,
-            shard=SHARD)
+            cluster=self.CLUSTER,
+            service=self.SERVICE,
+            shard=self.SHARD)
 
         overall_aggregated_per_shard_map = self.get_tags_map(
-            cluster=CLUSTER,
-            service=SERVICE,
-            shard=SHARD,
+            cluster=self.CLUSTER,
+            service=self.SERVICE,
+            shard=self.SHARD,
             source=WAVEFRONT_PROVIDED_SOURCE)
 
         aggregated_per_service_map = self.get_tags_map(
-            cluster=CLUSTER,
-            service=SERVICE,
+            cluster=self.CLUSTER,
+            service=self.SERVICE,
             module_name=module_name,
             func_name=func_name,
             source=WAVEFRONT_PROVIDED_SOURCE)
 
         overall_aggregated_per_service_map = self.get_tags_map(
-            cluster=CLUSTER,
-            service=SERVICE,
+            cluster=self.CLUSTER,
+            service=self.SERVICE,
             source=WAVEFRONT_PROVIDED_SOURCE)
 
         aggregated_per_cluster_map = self.get_tags_map(
-            cluster=CLUSTER,
+            cluster=self.CLUSTER,
             module_name=module_name,
             func_name=func_name,
             source=WAVEFRONT_PROVIDED_SOURCE)
 
         overall_aggregated_per_cluster_map = self.get_tags_map(
-            cluster=CLUSTER,
+            cluster=self.CLUSTER,
             source=WAVEFRONT_PROVIDED_SOURCE)
 
         aggregated_per_application_map = self.get_tags_map(
@@ -186,21 +196,21 @@ class WavefrontMiddleware(MiddlewareMixin):
         # django.server.response.style._id_.make.GET.200.aggregated_per_service.count
         # django.server.response.style._id_.make.GET.200.aggregated_per_cluster.count
         # django.server.response.style._id_.make.GET.200.aggregated_per_application.count
-        reg.counter(response_metric_key + ".cumulative",
-                    tags=complete_tags_map).inc()
-        if application_tags.shard:
+        self.reg.counter(response_metric_key + ".cumulative",
+                         tags=complete_tags_map).inc()
+        if self.application_tags.shard:
             delta_counter(
-                reg, response_metric_key + ".aggregated_per_shard",
+                self.reg, response_metric_key + ".aggregated_per_shard",
                 tags=aggregated_per_shard_map).inc()
         delta_counter(
-            reg, response_metric_key + ".aggregated_per_service",
+            self.reg, response_metric_key + ".aggregated_per_service",
             tags=aggregated_per_service_map).inc()
-        if application_tags.cluster:
+        if self.application_tags.cluster:
             delta_counter(
-                reg, response_metric_key + ".aggregated_per_cluster",
+                self.reg, response_metric_key + ".aggregated_per_cluster",
                 tags=aggregated_per_cluster_map).inc()
         delta_counter(
-            reg, response_metric_key + ".aggregated_per_application",
+            self.reg, response_metric_key + ".aggregated_per_application",
             tags=aggregated_per_application_map).inc()
 
         # django.server.response.style._id_.make.summary.GET.200.latency.m
@@ -208,10 +218,10 @@ class WavefrontMiddleware(MiddlewareMixin):
         if hasattr(request, 'wf_start_timestamp'):
             timestamp_duration = default_timer() - request.wf_start_timestamp
             cpu_nanos_duration = time.clock() - request.wf_cpu_nanos
-            reg.histogram(response_metric_key + ".latency",
-                          tags=complete_tags_map).add(timestamp_duration)
-            reg.histogram(response_metric_key + ".cpu_ns",
-                          tags=complete_tags_map).add(cpu_nanos_duration)
+            self.reg.histogram(response_metric_key + ".latency",
+                               tags=complete_tags_map).add(timestamp_duration)
+            self.reg.histogram(response_metric_key + ".cpu_ns",
+                               tags=complete_tags_map).add(cpu_nanos_duration)
 
         # django.server.response.errors.aggregated_per_source.count
         # django.server.response.errors.aggregated_per_shard.count
@@ -219,39 +229,53 @@ class WavefrontMiddleware(MiddlewareMixin):
         # django.server.response.errors.aggregated_per_cluster.count
         # django.server.response.errors.aggregated_per_application.count
         if self.is_error_status_code(response):
-            reg.counter("response.errors", tags=complete_tags_map)
-            reg.counter("response.errors.aggregated_per_source",
-                        tags=overall_aggregated_per_source_map)
-            if application_tags.shard:
-                delta_counter(reg, "response.errors.aggregated_per_shard",
-                              tags=overall_aggregated_per_shard_map)
-            delta_counter(reg, "response.errors.aggregated_per_service",
-                          tags=overall_aggregated_per_service_map)
-            if application_tags.cluster:
-                delta_counter(reg, "response.errors.aggregated_per_cluster",
-                              tags=overall_aggregated_per_cluster_map)
-            delta_counter(reg, "response.errors.aggregated_per_application",
-                          tags=overall_aggregated_per_application_map)
+            self.reg.counter("response.errors", tags=complete_tags_map).inc()
+            self.reg.counter("response.errors.aggregated_per_source",
+                             tags=overall_aggregated_per_source_map).inc()
+            if self.application_tags.shard:
+                delta_counter(self.reg, "response.errors.aggregated_per_shard",
+                              tags=overall_aggregated_per_shard_map).inc()
+            delta_counter(self.reg, "response.errors.aggregated_per_service",
+                          tags=overall_aggregated_per_service_map).inc()
+            if self.application_tags.cluster:
+                delta_counter(self.reg,
+                              "response.errors.aggregated_per_cluster",
+                              tags=overall_aggregated_per_cluster_map).inc()
+            delta_counter(self.reg,
+                          "response.errors.aggregated_per_application",
+                          tags=overall_aggregated_per_application_map).inc()
 
         # django.server.response.completed.aggregated_per_source.count
         # django.server.response.completed.aggregated_per_shard.count
         # django.server.response.completed.aggregated_per_service.count
         # django.server.response.completed.aggregated_per_cluster.count
         # django.server.response.completed.aggregated_per_application.count
-        reg.counter("response.completed.aggregated_per_source",
-                    tags=overall_aggregated_per_source_map).inc()
-        if SHARD is not NULL_TAG_VAL:
+        self.reg.counter("response.completed.aggregated_per_source",
+                         tags=overall_aggregated_per_source_map).inc()
+        if self.SHARD is not NULL_TAG_VAL:
             delta_counter(
-                reg, "response.completed.aggregated_per_shard",
+                self.reg, "response.completed.aggregated_per_shard",
                 tags=overall_aggregated_per_shard_map).inc()
-        reg.counter("response.completed.aggregated_per_service",
-                    tags=overall_aggregated_per_service_map).inc()
-        if CLUSTER is not NULL_TAG_VAL:
+            self.reg.counter("response.completed.aggregated_per_service",
+                             tags=overall_aggregated_per_service_map).inc()
+        if self.CLUSTER is not NULL_TAG_VAL:
             delta_counter(
-                reg, "response.completed.aggregated_per_cluster",
+                self.reg, "response.completed.aggregated_per_cluster",
                 tags=overall_aggregated_per_cluster_map).inc()
-        reg.counter("response.completed.aggregated_per_application",
-                    tags=overall_aggregated_per_application_map).inc()
+            self.reg.counter("response.completed.aggregated_per_application",
+                             tags=overall_aggregated_per_application_map).inc()
+        if self.tracer:
+            span = self.tracer.get_span(request)
+            span.set_tag("http.status_code", str(response.status_code))
+            if self.is_error_status_code(response):
+                span.set_tag("error", "true")
+            span.set_tag("span.kind", "server")
+            span.set_tag("django.resource.module", module_name)
+            span.set_tag("django.resource.func", func_name)
+            span.set_tag("component", DJANGO_COMPONENT)
+            span.set_tag("http.method", request.method)
+            span.set_tag("http.url", request.build_absolute_uri())
+            self.tracer._finish_tracing(request)
         return response
 
     @staticmethod
@@ -306,3 +330,11 @@ class WavefrontMiddleware(MiddlewareMixin):
         if math.isnan(cur_val):
             cur_val = 0
         gauge.set_value(cur_val + val)
+
+    @staticmethod
+    def get_conf(key):
+        if hasattr(settings, key):
+            return settings.__getattr__(key)
+        if key in os.environ:
+            return os.environ[key]
+        return None

@@ -1,2 +1,4 @@
+six
 Django>=1.10
+django_opentracing
 wavefront_pyformance

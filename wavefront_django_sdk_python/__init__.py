@@ -1,0 +1,1 @@
+from django_opentracing.tracer import DjangoTracer
