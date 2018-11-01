@@ -27,7 +27,7 @@ except ImportError:
 class WavefrontMiddleware(MiddlewareMixin):
 
     def __init__(self, get_response=None):
-        super().__init__()
+        super().__init__(get_response)
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         self.MIDDLEWARE_ENABLED = False
@@ -60,7 +60,6 @@ class WavefrontMiddleware(MiddlewareMixin):
                     component=DJANGO_COMPONENT,
                     source=self.reporter.source,
                     reporting_interval_seconds=HEART_BEAT_INTERVAL)
-                self.get_response = get_response
                 initialize_global_tracer()
                 self.MIDDLEWARE_ENABLED = True
         except AttributeError as e:

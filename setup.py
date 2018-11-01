@@ -16,7 +16,8 @@ VERSION = '0.1.0'
 # prerequisite: setuptools
 # http://pypi.python.org/pypi/setuptools
 
-REQUIRES = ['wavefront_pyformance', 'opentracing>=2.0', 'six', 'django_opentracing']
+REQUIRES = ['wavefront_pyformance', 'opentracing>=2.0', 'six', 'django',
+            'django_opentracing']
 
 setup(
     name=NAME,
