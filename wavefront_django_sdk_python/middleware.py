@@ -5,13 +5,13 @@ import logging
 from timeit import default_timer
 from django.urls import resolve
 from django.conf import settings
-from django_opentracing import DjangoTracer
-from django_opentracing.tracer import initialize_global_tracer
+from django_opentracing import DjangoTracing
+from django_opentracing.tracing import initialize_global_tracer
 from wavefront_pyformance.wavefront_reporter import WavefrontReporter
 from wavefront_pyformance.tagged_registry import TaggedRegistry
 from wavefront_pyformance.delta import delta_counter
-from wavefront_django_sdk_python.heartbeater_service import HeartbeaterService
-from wavefront_django_sdk_python.application_tags import ApplicationTags
+from wavefront_pyformance.wavefront_histogram import wavefront_histogram
+from wavefront_sdk.common import HeartbeaterService, ApplicationTags
 from wavefront_django_sdk_python.constants import NULL_TAG_VAL, \
     WAVEFRONT_PROVIDED_SOURCE, RESPONSE_PREFIX, REQUEST_PREFIX, \
     REPORTER_PREFIX, DJANGO_COMPONENT, HEART_BEAT_INTERVAL
@@ -27,23 +27,23 @@ except ImportError:
 class WavefrontMiddleware(MiddlewareMixin):
 
     def __init__(self, get_response=None):
-        super().__init__(get_response)
+        super(WavefrontMiddleware, self).__init__(get_response)
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         self.MIDDLEWARE_ENABLED = False
         try:
             self.reporter = self.get_conf('WF_REPORTER')
             self.application_tags = self.get_conf('APPLICATION_TAGS')
-            self.tracer = self.get_conf('OPENTRACING_TRACER')
+            self.tracing = self.get_conf('OPENTRACING_TRACING')
             if not isinstance(self.reporter, WavefrontReporter):
                 raise AttributeError(
                     "WF_REPORTER not correctly configured!")
             elif not isinstance(self.application_tags, ApplicationTags):
                 raise AttributeError(
                     "APPLICATION_TAGS not correctly configured!")
-            elif not isinstance(self.tracer, DjangoTracer):
+            elif not isinstance(self.tracing, DjangoTracing):
                 raise AttributeError(
-                    "OPENTRACING_TRACER not correctly configured!")
+                    "OPENTRACING_TRACING not correctly configured!")
             else:
                 self.APPLICATION = self.application_tags.application or \
                                    NULL_TAG_VAL
@@ -60,7 +60,7 @@ class WavefrontMiddleware(MiddlewareMixin):
                     component=DJANGO_COMPONENT,
                     source=self.reporter.source,
                     reporting_interval_seconds=HEART_BEAT_INTERVAL)
-                initialize_global_tracer()
+                initialize_global_tracer(self.tracing)
                 self.MIDDLEWARE_ENABLED = True
         except AttributeError as e:
             self.logger.warning(e)
@@ -94,15 +94,15 @@ class WavefrontMiddleware(MiddlewareMixin):
                 shard=self.SHARD),
             val=1
         )
-        if self.tracer:
-            if not self.tracer._trace_all:
+        if self.tracing:
+            if not self.tracing._trace_all:
                 return None
             if hasattr(settings, 'OPENTRACING_TRACED_ATTRIBUTES'):
                 traced_attributes = getattr(settings,
                                             'OPENTRACING_TRACED_ATTRIBUTES')
             else:
                 traced_attributes = []
-            self.tracer._apply_tracing(request, view_func, traced_attributes)
+            self.tracing._apply_tracing(request, view_func, traced_attributes)
 
     def process_response(self, request, response):
         if not self.MIDDLEWARE_ENABLED:
@@ -110,6 +110,19 @@ class WavefrontMiddleware(MiddlewareMixin):
         entity_name = self.get_entity_name(request)
         func_name = resolve(request.path_info).func.__name__
         module_name = resolve(request.path_info).func.__module__
+
+        if self.tracing:
+            span = self.tracing.get_span(request)
+            span.set_tag("http.status_code", str(response.status_code))
+            if self.is_error_status_code(response):
+                span.set_tag("error", "true")
+            span.set_tag("span.kind", "server")
+            span.set_tag("django.resource.module", module_name)
+            span.set_tag("django.resource.func", func_name)
+            span.set_tag("component", DJANGO_COMPONENT)
+            span.set_tag("http.method", request.method)
+            span.set_tag("http.url", request.build_absolute_uri())
+            self.tracing._finish_tracing(request, response=response)
 
         self.update_gauge(
             registry=self.reg,
@@ -195,6 +208,7 @@ class WavefrontMiddleware(MiddlewareMixin):
         # django.server.response.style._id_.make.GET.200.aggregated_per_service.count
         # django.server.response.style._id_.make.GET.200.aggregated_per_cluster.count
         # django.server.response.style._id_.make.GET.200.aggregated_per_application.count
+        # django.server.response.style._id_.make.GET.errors
         self.reg.counter(response_metric_key + ".cumulative",
                          tags=complete_tags_map).inc()
         if self.application_tags.shard:
@@ -212,22 +226,15 @@ class WavefrontMiddleware(MiddlewareMixin):
             self.reg, response_metric_key + ".aggregated_per_application",
             tags=aggregated_per_application_map).inc()
 
-        # django.server.response.style._id_.make.summary.GET.200.latency.m
-        # django.server.response.style._id_.make.summary.GET.200.cpu_ns.m
-        if hasattr(request, 'wf_start_timestamp'):
-            timestamp_duration = default_timer() - request.wf_start_timestamp
-            cpu_nanos_duration = time.clock() - request.wf_cpu_nanos
-            self.reg.histogram(response_metric_key + ".latency",
-                               tags=complete_tags_map).add(timestamp_duration)
-            self.reg.histogram(response_metric_key + ".cpu_ns",
-                               tags=complete_tags_map).add(cpu_nanos_duration)
-
         # django.server.response.errors.aggregated_per_source.count
         # django.server.response.errors.aggregated_per_shard.count
         # django.server.response.errors.aggregated_per_service.count
         # django.server.response.errors.aggregated_per_cluster.count
         # django.server.response.errors.aggregated_per_application.count
         if self.is_error_status_code(response):
+            self.reg.counter(
+                self.get_metric_name_without_status(entity_name, request),
+                tags=complete_tags_map).inc()
             self.reg.counter("response.errors", tags=complete_tags_map).inc()
             self.reg.counter("response.errors.aggregated_per_source",
                              tags=overall_aggregated_per_source_map).inc()
@@ -263,18 +270,16 @@ class WavefrontMiddleware(MiddlewareMixin):
                 tags=overall_aggregated_per_cluster_map).inc()
             self.reg.counter("response.completed.aggregated_per_application",
                              tags=overall_aggregated_per_application_map).inc()
-        if self.tracer:
-            span = self.tracer.get_span(request)
-            span.set_tag("http.status_code", str(response.status_code))
-            if self.is_error_status_code(response):
-                span.set_tag("error", "true")
-            span.set_tag("span.kind", "server")
-            span.set_tag("django.resource.module", module_name)
-            span.set_tag("django.resource.func", func_name)
-            span.set_tag("component", DJANGO_COMPONENT)
-            span.set_tag("http.method", request.method)
-            span.set_tag("http.url", request.build_absolute_uri())
-            self.tracer._finish_tracing(request)
+
+        # django.server.response.style._id_.make.summary.GET.200.latency.m
+        # django.server.response.style._id_.make.summary.GET.200.cpu_ns.m
+        if hasattr(request, 'wf_start_timestamp'):
+            timestamp_duration = default_timer() - request.wf_start_timestamp
+            cpu_nanos_duration = time.clock() - request.wf_cpu_nanos
+            wavefront_histogram(self.reg, response_metric_key + ".latency",
+                                tags=complete_tags_map).add(timestamp_duration)
+            wavefront_histogram(self.reg, response_metric_key + ".cpu_ns",
+                                tags=complete_tags_map).add(cpu_nanos_duration)
         return response
 
     @staticmethod
@@ -316,6 +321,12 @@ class WavefrontMiddleware(MiddlewareMixin):
             metric_name.append(str(response.status_code))
         else:
             metric_name.insert(0, REQUEST_PREFIX)
+        return '.'.join(metric_name)
+
+    @staticmethod
+    def get_metric_name_without_status(entity_name, request):
+        metric_name = [entity_name, request.method]
+        metric_name.insert(0, REQUEST_PREFIX)
         return '.'.join(metric_name)
 
     @staticmethod

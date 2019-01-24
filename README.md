@@ -15,8 +15,9 @@ Configure *settings.py* of your application to install Django SDK as follows:
  ```python
 # setting.py
 
-from wavefront_pyformance.wavefront_reporter import WavefrontDirectReporter
-from wavefront_django_sdk_python import DjangoTracer, application_tags
+from wavefront_pyformance.wavefront_reporter import WavefrontDirectReporter, WavefrontProxyReporter
+from wavefront_sdk.common import ApplicationTags
+from wavefront_django_sdk_python import DjangoTracing
 from wavefront_opentracing_python_sdk import reporting, WavefrontTracer
 
 INSTALLED_APPS = [
@@ -32,11 +33,11 @@ MIDDLEWARE = [
 
 SOURCE = "{SOURCE}"
 
-APPLICATION_TAGS = application_tags.ApplicationTags(
+APPLICATION_TAGS = ApplicationTags(
     application="{APP_NAME}",
     service="{SERVICE_NAME}",
     cluster="{CLUSTER_NAME}",  # Optional
-    shard="{SHARD_NAME},"  # Optional
+    shard="{SHARD_NAME}," , # Optional
     custom_tags={"location": "Oregon", "env": "Staging"}  # Optional
 )
 
@@ -47,7 +48,7 @@ WF_REPORTER = WavefrontDirectReporter(
     reporting_interval=5,  # Optional, default value is 10 secs
     source=SOURCE,
     tags={"application": APPLICATION_TAGS.application}
-)
+).report_minute_distribution()
 
 # Or, Sending data via Proxy
 WF_REPORTER = WavefrontProxyReporter(
@@ -56,7 +57,7 @@ WF_REPORTER = WavefrontProxyReporter(
     reporting_interval=5,  # Optional, default value is 10 secs
     source=SOURCE,
     tags={"application": APPLICATION_TAGS.application}
-)
+).report_minute_distribution()
 
 span_reporter = reporting.WavefrontSpanReporter(
     client=WF_REPORTER.wavefront_client,
@@ -65,7 +66,7 @@ span_reporter = reporting.WavefrontSpanReporter(
 
 OPENTRACING_TRACE_ALL = True  # Optional, default value is False
 
-OPENTRACING_TRACER = DjangoTracer(WavefrontTracer(
+OPENTRACING_TRACER = DjangoTracing(WavefrontTracer(
     reporter=span_reporter, tags=APPLICATION_TAGS.get_as_list()))
 
  ```
