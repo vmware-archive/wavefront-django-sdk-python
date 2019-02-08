@@ -17,18 +17,18 @@ Configure *settings.py* of your application to install Django SDK as follows:
 
 from wavefront_pyformance.wavefront_reporter import WavefrontDirectReporter, WavefrontProxyReporter
 from wavefront_sdk.common import ApplicationTags
-from wavefront_django_sdk_python import DjangoTracing
-from wavefront_opentracing_python_sdk import reporting, WavefrontTracer
+from wavefront_django_sdk import DjangoTracing
+from wavefront_opentracing_sdk import reporting, WavefrontTracer
 
 INSTALLED_APPS = [
-    ...
-    'wavefront_django_sdk_python',
-    ...
+    '...',
+    'wavefront_django_sdk',
+    '...'
 ]
  
 MIDDLEWARE = [
-    'wavefront_django_sdk_python.middleware.WavefrontMiddleware',
-    ...
+    'wavefront_django_sdk.middleware.WavefrontMiddleware',
+    '...'
 ]
 
 SOURCE = "{SOURCE}"
@@ -66,8 +66,8 @@ span_reporter = reporting.WavefrontSpanReporter(
 
 OPENTRACING_TRACE_ALL = True  # Optional, default value is False
 
-OPENTRACING_TRACER = DjangoTracing(WavefrontTracer(
-    reporter=span_reporter, tags=APPLICATION_TAGS.get_as_list()))
+OPENTRACING_TRACING = DjangoTracing(WavefrontTracer(
+    reporter=span_reporter, application_tags=APPLICATION_TAGS))
 
  ```
 

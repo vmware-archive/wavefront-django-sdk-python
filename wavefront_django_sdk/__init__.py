@@ -1,0 +1,1 @@
+from wavefront_django_sdk.tracing import DjangoTracing

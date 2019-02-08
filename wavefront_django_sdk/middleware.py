@@ -12,7 +12,7 @@ from wavefront_pyformance.tagged_registry import TaggedRegistry
 from wavefront_pyformance.delta import delta_counter
 from wavefront_pyformance.wavefront_histogram import wavefront_histogram
 from wavefront_sdk.common import HeartbeaterService, ApplicationTags
-from wavefront_django_sdk_python.constants import NULL_TAG_VAL, \
+from wavefront_django_sdk.constants import NULL_TAG_VAL, \
     WAVEFRONT_PROVIDED_SOURCE, RESPONSE_PREFIX, REQUEST_PREFIX, \
     REPORTER_PREFIX, DJANGO_COMPONENT, HEART_BEAT_INTERVAL
 
@@ -35,7 +35,9 @@ class WavefrontMiddleware(MiddlewareMixin):
             self.reporter = self.get_conf('WF_REPORTER')
             self.application_tags = self.get_conf('APPLICATION_TAGS')
             self.tracing = self.get_conf('OPENTRACING_TRACING')
-            if not isinstance(self.reporter, WavefrontReporter):
+            self.is_debug = self.get_conf('WF_DEBUG') or False
+            if not self.reporter or (not isinstance(
+                    self.reporter, WavefrontReporter) and not self.is_debug):
                 raise AttributeError(
                     "WF_REPORTER not correctly configured!")
             elif not isinstance(self.application_tags, ApplicationTags):
@@ -51,15 +53,22 @@ class WavefrontMiddleware(MiddlewareMixin):
                 self.SERVICE = self.application_tags.service or NULL_TAG_VAL
                 self.SHARD = self.application_tags.shard or NULL_TAG_VAL
                 self.reporter.prefix = REPORTER_PREFIX
-                self.reg = TaggedRegistry()
+                self.reg = None
+                if self.is_debug:
+                    self.reg = self.get_conf('DEBUG_REGISTRY')
+                self.reg = self.reg or TaggedRegistry()
                 self.reporter.registry = self.reg
-                self.reporter.start()
-                self.heartbeaterService = HeartbeaterService(
-                    wavefront_client=self.reporter.wavefront_client,
-                    application_tags=self.application_tags,
-                    component=DJANGO_COMPONENT,
-                    source=self.reporter.source,
-                    reporting_interval_seconds=HEART_BEAT_INTERVAL)
+                if not self.get_conf('WF_DISABLE_REPORTING'):
+                    self.reporter.start()
+                    self.heartbeaterService = HeartbeaterService(
+                        wavefront_client=self.reporter.wavefront_client,
+                        application_tags=self.application_tags,
+                        component=DJANGO_COMPONENT,
+                        source=self.reporter.source,
+                        reporting_interval_seconds=HEART_BEAT_INTERVAL)
+                self.tracing._trace_all = getattr(settings,
+                                                  'OPENTRACING_TRACE_ALL',
+                                                  True)
                 initialize_global_tracer(self.tracing)
                 self.MIDDLEWARE_ENABLED = True
         except AttributeError as e:
@@ -67,6 +76,12 @@ class WavefrontMiddleware(MiddlewareMixin):
         finally:
             if not self.MIDDLEWARE_ENABLED:
                 self.logger.warning("Wavefront Django Middleware not enabled!")
+
+    def __del__(self):
+        if self.reporter:
+            self.reporter.stop()
+        if self.heartbeaterService:
+            self.heartbeaterService.close()
 
     def process_view(self, request, view_func, view_args, view_kwargs):
         if not self.MIDDLEWARE_ENABLED:
@@ -112,16 +127,6 @@ class WavefrontMiddleware(MiddlewareMixin):
         module_name = resolve(request.path_info).func.__module__
 
         if self.tracing:
-            span = self.tracing.get_span(request)
-            span.set_tag("http.status_code", str(response.status_code))
-            if self.is_error_status_code(response):
-                span.set_tag("error", "true")
-            span.set_tag("span.kind", "server")
-            span.set_tag("django.resource.module", module_name)
-            span.set_tag("django.resource.func", func_name)
-            span.set_tag("component", DJANGO_COMPONENT)
-            span.set_tag("http.method", request.method)
-            span.set_tag("http.url", request.build_absolute_uri())
             self.tracing._finish_tracing(request, response=response)
 
         self.update_gauge(
