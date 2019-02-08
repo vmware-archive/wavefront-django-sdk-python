@@ -287,10 +287,9 @@ class WavefrontMiddleware(MiddlewareMixin):
                                 tags=complete_tags_map).add(cpu_nanos_duration)
         return response
 
-    @staticmethod
-    def get_tags_map(cluster=None, service=None, shard=None, module_name=None,
-                     func_name=None, source=None):
-        tags_map = {}
+    def get_tags_map(self, cluster=None, service=None, shard=None,
+                     module_name=None, func_name=None, source=None):
+        tags_map = {'application': self.APPLICATION}
         if cluster:
             tags_map['cluster'] = cluster
         if service:
