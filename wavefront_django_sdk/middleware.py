@@ -63,9 +63,8 @@ class WavefrontMiddleware(MiddlewareMixin):
                     self.heartbeaterService = HeartbeaterService(
                         wavefront_client=self.reporter.wavefront_client,
                         application_tags=self.application_tags,
-                        component=DJANGO_COMPONENT,
-                        source=self.reporter.source,
-                        reporting_interval_seconds=HEART_BEAT_INTERVAL)
+                        components=DJANGO_COMPONENT,
+                        source=self.reporter.source)
                 self.tracing._trace_all = getattr(settings,
                                                   'OPENTRACING_TRACE_ALL',
                                                   True)
