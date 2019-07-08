@@ -1,3 +1,9 @@
+"""
+Constants for Django SDK.
+
+@author: Hao Song (songhao@vmware.com)
+"""
+
 NULL_TAG_VAL = 'none'
 
 REPORTER_PREFIX = 'django.'

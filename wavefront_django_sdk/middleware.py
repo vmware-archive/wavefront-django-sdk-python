@@ -1,20 +1,29 @@
+"""
+Wavefront Django Middleware.
+
+@author: Hao Song (songhao@vmware.com)
+"""
+import logging
+import math
 import os
 import time
-import math
-import logging
 from timeit import default_timer
-from django.urls import resolve
+
 from django.conf import settings
+from django.urls import resolve
+
 from django_opentracing import DjangoTracing
 from django_opentracing.tracing import initialize_global_tracer
-from wavefront_pyformance.wavefront_reporter import WavefrontReporter
-from wavefront_pyformance.tagged_registry import TaggedRegistry
+
+from wavefront_django_sdk.constants import DJANGO_COMPONENT, NULL_TAG_VAL, \
+    REPORTER_PREFIX, REQUEST_PREFIX, RESPONSE_PREFIX, WAVEFRONT_PROVIDED_SOURCE
+
 from wavefront_pyformance.delta import delta_counter
+from wavefront_pyformance.tagged_registry import TaggedRegistry
 from wavefront_pyformance.wavefront_histogram import wavefront_histogram
-from wavefront_sdk.common import HeartbeaterService, ApplicationTags
-from wavefront_django_sdk.constants import NULL_TAG_VAL, \
-    WAVEFRONT_PROVIDED_SOURCE, RESPONSE_PREFIX, REQUEST_PREFIX, \
-    REPORTER_PREFIX, DJANGO_COMPONENT, HEART_BEAT_INTERVAL
+from wavefront_pyformance.wavefront_reporter import WavefrontReporter
+
+from wavefront_sdk.common import ApplicationTags, HeartbeaterService
 
 try:
     # Django >= 1.10
@@ -24,9 +33,15 @@ except ImportError:
     MiddlewareMixin = object
 
 
+# pylint: disable=invalid-name, protected-access, too-many-instance-attributes
 class WavefrontMiddleware(MiddlewareMixin):
+    """Wavefront Django Middleware."""
 
     def __init__(self, get_response=None):
+        """Construct Wavefront Django Middleware.
+
+        :param get_response: Method to get response
+        """
         super(WavefrontMiddleware, self).__init__(get_response)
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
@@ -77,12 +92,22 @@ class WavefrontMiddleware(MiddlewareMixin):
                 self.logger.warning("Wavefront Django Middleware not enabled!")
 
     def __del__(self):
+        """Destruct Wavefront Django Middleware."""
         if self.reporter:
             self.reporter.stop()
         if self.heartbeaterService:
             self.heartbeaterService.close()
 
+    # pylint: disable=unused-argument
     def process_view(self, request, view_func, view_args, view_kwargs):
+        """
+        Process the view before Django calls.
+
+        :param request: incoming HTTP request.
+        :param view_func: function that Django is about to use.
+        :param view_args: list of positional arguments passed to the view.
+        :param view_kwargs: dictionary of keyword arguments passed to the view.
+        """
         if not self.MIDDLEWARE_ENABLED:
             return
         request.wf_start_timestamp = default_timer()
@@ -94,9 +119,8 @@ class WavefrontMiddleware(MiddlewareMixin):
         self.update_gauge(
             registry=self.reg,
             key=self.get_metric_name(entity_name, request) + ".inflight",
-            tags=self.get_tags_map(
-                module_name=module_name,
-                func_name=func_name),
+            tags=self.get_tags_map(module_name=module_name,
+                                   func_name=func_name),
             val=1
         )
         self.update_gauge(
@@ -110,7 +134,7 @@ class WavefrontMiddleware(MiddlewareMixin):
         )
         if self.tracing:
             if not self.tracing._trace_all:
-                return None
+                return
             if hasattr(settings, 'OPENTRACING_TRACED_ATTRIBUTES'):
                 traced_attributes = getattr(settings,
                                             'OPENTRACING_TRACED_ATTRIBUTES')
@@ -118,7 +142,14 @@ class WavefrontMiddleware(MiddlewareMixin):
                 traced_attributes = []
             self.tracing._apply_tracing(request, view_func, traced_attributes)
 
+    # pylint: disable=too-many-locals
     def process_response(self, request, response):
+        """
+        Process the response before Django calls.
+
+        :param request: incoming HTTP request.
+        :param response: outgoing response.
+        """
         if not self.MIDDLEWARE_ENABLED:
             return response
         entity_name = self.get_entity_name(request)
@@ -277,6 +308,7 @@ class WavefrontMiddleware(MiddlewareMixin):
 
         # django.server.response.style._id_.make.summary.GET.200.latency.m
         # django.server.response.style._id_.make.summary.GET.200.cpu_ns.m
+        # django.server.response.style._id_.make.summary.GET.200.total_time.count
         if hasattr(request, 'wf_start_timestamp'):
             timestamp_duration = default_timer() - request.wf_start_timestamp
             cpu_nanos_duration = time.clock() - request.wf_cpu_nanos
@@ -284,10 +316,23 @@ class WavefrontMiddleware(MiddlewareMixin):
                                 tags=complete_tags_map).add(timestamp_duration)
             wavefront_histogram(self.reg, response_metric_key + ".cpu_ns",
                                 tags=complete_tags_map).add(cpu_nanos_duration)
+            self.reg.counter(response_metric_key + ".total_time",
+                             tags=complete_tags_map).inc(timestamp_duration)
         return response
 
+    # pylint: disable=too-many-arguments
     def get_tags_map(self, cluster=None, service=None, shard=None,
                      module_name=None, func_name=None, source=None):
+        """Get tags of span as dict.
+
+        :param cluster: Cluster from application tags.
+        :param service: Service from application tags.
+        :param shard: Shard from application tags.
+        :param module_name: Name of Django module.
+        :param func_name: Name of Django func
+        :param source: Name of source.
+        :return: tags of span.
+        """
         tags_map = {'application': self.APPLICATION}
         if cluster:
             tags_map['cluster'] = cluster
@@ -305,6 +350,11 @@ class WavefrontMiddleware(MiddlewareMixin):
 
     @staticmethod
     def get_entity_name(request):
+        """Get entity name from the request.
+
+        :param request: Http request.
+        :return: Entity name.
+        """
         resolver_match = request.resolver_match
         if resolver_match:
             entity_name = resolver_match.url_name
@@ -318,6 +368,13 @@ class WavefrontMiddleware(MiddlewareMixin):
 
     @staticmethod
     def get_metric_name(entity_name, request, response=None):
+        """Get metric name.
+
+        :param entity_name: Entity Name.
+        :param request: Http request.
+        :param response: Response obj.
+        :return: Metric name.
+        """
         metric_name = [entity_name, request.method]
         if response:
             metric_name.insert(0, RESPONSE_PREFIX)
@@ -328,16 +385,34 @@ class WavefrontMiddleware(MiddlewareMixin):
 
     @staticmethod
     def get_metric_name_without_status(entity_name, request):
+        """Get metric name w/o response.
+
+        :param entity_name: Entity Name.
+        :param request: Http request.
+        :return: Metric name
+        """
         metric_name = [entity_name, request.method]
         metric_name.insert(0, REQUEST_PREFIX)
         return '.'.join(metric_name)
 
     @staticmethod
     def is_error_status_code(response):
+        """Check is response status code is error or not.
+
+        :param response: Response obj
+        :return: Is error response code or not.
+        """
         return 400 <= response.status_code <= 599
 
     @staticmethod
     def update_gauge(registry, key, tags, val):
+        """Update gauge value.
+
+        :param registry: TaggedRegistry from pyformance.
+        :param key: Key of the gauge.
+        :param tags: Tags of the gauge.
+        :param val: Value of the gauge.
+        """
         gauge = registry.gauge(key=key, tags=tags)
         cur_val = gauge.get_value()
         if math.isnan(cur_val):
@@ -346,6 +421,11 @@ class WavefrontMiddleware(MiddlewareMixin):
 
     @staticmethod
     def get_conf(key):
+        """Get configuration from settings or env.
+
+        :param key: Key of the configuration.
+        :return: Value of the configuration.
+        """
         if hasattr(settings, key):
             return settings.__getattr__(key)
         if key in os.environ:

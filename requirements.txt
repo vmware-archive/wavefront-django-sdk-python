@@ -1,5 +1,5 @@
-six
+six>=1.11
 Django>=1.10
-opentracing<2.0
+opentracing>=2.0
 django_opentracing>=1.0
-wavefront_pyformance
+wavefront_pyformance>=1.0

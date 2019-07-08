@@ -1,1 +1,5 @@
-from wavefront_django_sdk.tracing import DjangoTracing
+"""
+Wavefront Django Python SDK.
+
+@author: Hao Song (songhao@vmware.com)
+"""
