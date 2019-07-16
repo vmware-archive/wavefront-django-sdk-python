@@ -1,34 +1,48 @@
+#!/usr/bin/env python3
 # coding: utf-8
+"""Wavefront Django SDK.
 
+<p>This is a Wavefront Django SDK</p>
 """
-    Wavefront Django SDK
-    <p>This is a Wavefront Django SDK</p>  # noqa: E501
-"""
 
-from setuptools import setup, find_packages  # noqa: H301
+import os
 
-NAME = 'wavefront_django_sdk'
-VERSION = '0.1.0'
-# To install the library, run the following
-#
-# python setup.py install
-#
-# prerequisite: setuptools
-# http://pypi.python.org/pypi/setuptools
+import setuptools
 
-REQUIRES = ['opentracing>=2.0', 'six>=1.11', 'django>=1.10',
-            'django_opentracing>=1.0', 'wavefront-pyformance>=1.0']
+with open(os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                       'README.md')) as fd:
+    LONG_DESCRIPTION = fd.read()
 
-setup(
-    name=NAME,
-    version=VERSION,
-    description="Wavefront Django Python SDK",
-    author_email="songhao@vmware.com",
-    url="https://github.com/wavefrontHQ/wavefront-django-sdk-python",
-    keywords=["Wavefront SDK", "Wavefront", "Django"],
-    install_requires=REQUIRES,
-    packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
+setuptools.setup(
+    name='wavefront-django-sdk-python',
+    version='0.1.0',
+    author='Wavefront by VMware',
+    author_email='songhao@vmware.com',
+    url='https://github.com/wavefrontHQ/wavefront-django-sdk-python',
+    license='Apache-2.0',
+    description='Wavefront Django SDK',
+    long_description=LONG_DESCRIPTION,
+    long_description_content_type='text/markdown',
+    keywords=[
+        'Wavefront',
+        'Wavefront SDK',
+        'Django'
+    ],
+    classifiers=[
+        'License :: OSI Approved :: Apache Software License',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7'
+    ],
     include_package_data=True,
-    long_description="""\
-    """
+    packages=setuptools.find_packages(exclude=('*.tests', '*.tests.*',
+                                               'tests.*', 'tests')),
+    install_requires=(
+        'opentracing>=2.0',
+        'six>=1.11',
+        'django>=1.11',
+        'django-opentracing>=1.1',
+        'wavefront-opentracing-sdk-python>=1.2'
+    )
 )
