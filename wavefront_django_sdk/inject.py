@@ -5,8 +5,6 @@ Tracing Context Injection.
 """
 import opentracing
 
-import six
-
 
 # pylint: disable=protected-access
 def inject_as_headers(tracer, span, request):
@@ -14,5 +12,5 @@ def inject_as_headers(tracer, span, request):
     text_carrier = {}
     tracer._tracer.inject(span.context, opentracing.Format.TEXT_MAP,
                           text_carrier)
-    for key, val in six.iteritems(text_carrier):
+    for (key, val) in text_carrier.items():
         request.add_header(key, val)

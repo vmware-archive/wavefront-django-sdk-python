@@ -6,8 +6,6 @@ python:
   - "3.6"
   - "3.7"
 install:
-  - pip install opentracing
-  - pip install six
   - pip install django
   - pip install django-opentracing
   - pip install wavefront-opentracing-sdk-python

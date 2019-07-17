@@ -39,8 +39,6 @@ setuptools.setup(
     packages=setuptools.find_packages(exclude=('*.tests', '*.tests.*',
                                                'tests.*', 'tests')),
     install_requires=(
-        'opentracing>=2.0',
-        'six>=1.11',
         'django>=1.11',
         'django-opentracing>=1.1',
         'wavefront-opentracing-sdk-python>=1.2'
