@@ -11,6 +11,7 @@ from timeit import default_timer
 
 from django.conf import settings
 from django.urls import resolve
+from django.utils.deprecation import MiddlewareMixin
 
 from django_opentracing import DjangoTracing
 from django_opentracing.tracing import initialize_global_tracer
@@ -24,13 +25,6 @@ from wavefront_pyformance.wavefront_histogram import wavefront_histogram
 from wavefront_pyformance.wavefront_reporter import WavefrontReporter
 
 from wavefront_sdk.common import ApplicationTags, HeartbeaterService
-
-try:
-    # Django >= 1.10
-    from django.utils.deprecation import MiddlewareMixin
-except ImportError:
-    # Not required for Django <= 1.9, see:
-    MiddlewareMixin = object
 
 
 # pylint: disable=invalid-name, protected-access, too-many-instance-attributes

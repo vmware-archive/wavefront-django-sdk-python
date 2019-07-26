@@ -8,7 +8,7 @@ from django.urls import resolve
 
 from django_opentracing import tracing
 
-from wavefront_django_sdk.constants import DJANGO_COMPONENT
+from .constants import DJANGO_COMPONENT
 
 
 class DjangoTracing(tracing.DjangoTracing):
