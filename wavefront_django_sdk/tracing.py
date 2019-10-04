@@ -3,16 +3,34 @@ Wavefront Django Tracing.
 
 @author: Hao Song (songhao@vmware.com)
 """
-
+from django.conf import settings
 from django.urls import resolve
+from django.apps import apps
 
 from django_opentracing import tracing
 
-from .constants import DJANGO_COMPONENT
+from wavefront_django_sdk.constants import DJANGO_COMPONENT
+
+from wavefront_opentracing_sdk import reporting, WavefrontTracer
 
 
 class DjangoTracing(tracing.DjangoTracing):
     """Wavefront Django Tracing."""
+
+    def __init__(self, tracer=None, *args, **kwargs):
+        if tracer is None:
+            app_config = apps.get_app_config('wavefront_django_sdk')
+            span_reporter = reporting.WavefrontSpanReporter(
+                client=app_config.reporter.wavefront_client,
+                source=app_config.reporter.source
+            )
+            tracer = WavefrontTracer(
+                reporter=span_reporter,
+                application_tags=app_config.application_tags
+            )
+        super(DjangoTracing, self).__init__(tracer, *args, **kwargs)
+
+
 
     def _finish_tracing(self, request, response=None, error=None):
         scope = self._current_scopes.pop(request, None)

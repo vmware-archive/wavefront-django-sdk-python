@@ -15,11 +15,6 @@ Configure *settings.py* of your application to install Django SDK as follows:
  ```python
 # setting.py
 
-from wavefront_pyformance.wavefront_reporter import WavefrontDirectReporter, WavefrontProxyReporter
-from wavefront_sdk.common import ApplicationTags
-from wavefront_django_sdk import DjangoTracing
-from wavefront_opentracing_sdk import reporting, WavefrontTracer
-
 INSTALLED_APPS = [
     '...',
     'wavefront_django_sdk',
@@ -31,44 +26,37 @@ MIDDLEWARE = [
     '...'
 ]
 
-SOURCE = "{SOURCE}"
+WF_APPLICATION_TAGS = {
+    'application': "{APP_NAME}",
+    'service': "{SERVICE_NAME}",
+    'cluster': "{CLUSTER_NAME}",  # Optional
+    'shard': "{SHARD_NAME}," , # Optional
+    'custom_tags': {"location": "Oregon", "env": "Staging"}  # Optional
+}
 
-APPLICATION_TAGS = ApplicationTags(
-    application="{APP_NAME}",
-    service="{SERVICE_NAME}",
-    cluster="{CLUSTER_NAME}",  # Optional
-    shard="{SHARD_NAME}," , # Optional
-    custom_tags={"location": "Oregon", "env": "Staging"}  # Optional
-)
-
-# Sending data via Direct Ingestion
-WF_REPORTER = WavefrontDirectReporter(
-    server="{ADDRESS}",
-    token="{TOKEN}",
-    reporting_interval=5,  # Optional, default value is 10 secs
-    source=SOURCE,
-    tags={"application": APPLICATION_TAGS.application}
-).report_minute_distribution()
+# Sending data via Direct Ingestion 
+WF_REPORTER = 'wavefront_pyformance.wavefront_reporter.WavefrontDirectReporter'  # default
+WF_REPORTER_CONFIG = {
+    'server': '{}',
+    'token': '{TOKEN}',
+    'source': '{SOURCE}',
+    'reporting_interval': 5,  # Optional, default value is 10 secs
+    'tags': {"application": '{APP_NAME}'}
+}
 
 # Or, Sending data via Proxy
-WF_REPORTER = WavefrontProxyReporter(
-    host="{HOST}",
-    port=2878,  # Optional, Wavefront Proxy running on 2878 by default
-    reporting_interval=5,  # Optional, default value is 10 secs
-    source=SOURCE,
-    tags={"application": APPLICATION_TAGS.application}
-).report_minute_distribution()
+WF_REPORTER = 'wavefront_pyformance.wavefront_reporter.WavefrontProxyReporter'
+WF_REPORTER_CONFIG = {
+    'host': '{HOST}',
+    'port': 2878,  # Optional, Wavefront Proxy running on 2878 by default
+    # ...
+}
 
-span_reporter = reporting.WavefrontSpanReporter(
-    client=WF_REPORTER.wavefront_client,
-    source=SOURCE,
-)
+WF_REPORTER_GRANULARITY = 'minute'  # Optional:  minute, hour or day,
 
 OPENTRACING_TRACE_ALL = True  # Optional, default value is False
-
-OPENTRACING_TRACING = DjangoTracing(WavefrontTracer(
-    reporter=span_reporter, application_tags=APPLICATION_TAGS))
-
+OPENTRACING_TRACER_CALLABLE = 'wavefront_django_sdk.tracing.DjangoTracing'  # Optional, default shown
+OPENTRACING_TRACER_PARAMETERS = {} # Optional (Depending on the tracer implementation)
  ```
 
 ## Out of the box metrics and histograms for your Django based application.

@@ -9,6 +9,7 @@ import os
 import time
 from timeit import default_timer
 
+from django.apps import apps
 from django.conf import settings
 from django.urls import resolve
 from django.utils.deprecation import MiddlewareMixin
@@ -41,9 +42,10 @@ class WavefrontMiddleware(MiddlewareMixin):
         self.logger = logging.getLogger(__name__)
         self.MIDDLEWARE_ENABLED = False
         try:
-            self.reporter = self.get_conf('WF_REPORTER')
-            self.application_tags = self.get_conf('APPLICATION_TAGS')
-            self.tracing = self.get_conf('OPENTRACING_TRACING')
+            app_config = apps.get_app_config('wavefront_django_sdk')
+            self.reporter = app_config.reporter
+            self.application_tags = app_config.application_tags
+            self.tracing = app_config.tracing
             self.is_debug = self.get_conf('WF_DEBUG') or False
             if not self.reporter or (not isinstance(
                     self.reporter, WavefrontReporter) and not self.is_debug):
