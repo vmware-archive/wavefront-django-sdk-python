@@ -3,9 +3,8 @@ Wavefront Django Tracing.
 
 @author: Hao Song (songhao@vmware.com)
 """
-from django.conf import settings
-from django.urls import resolve
 from django.apps import apps
+from django.urls import resolve
 
 from django_opentracing import tracing
 
@@ -29,8 +28,6 @@ class DjangoTracing(tracing.DjangoTracing):
                 application_tags=app_config.application_tags
             )
         super(DjangoTracing, self).__init__(tracer, *args, **kwargs)
-
-
 
     def _finish_tracing(self, request, response=None, error=None):
         scope = self._current_scopes.pop(request, None)

@@ -1,8 +1,10 @@
+import platform
+
 from django.apps import AppConfig
 from django.conf import settings
 from django.utils.module_loading import import_string
+
 from wavefront_sdk.common import ApplicationTags
-import platform
 
 
 class WavefrontDjangoConfig(AppConfig):
@@ -50,6 +52,11 @@ class WavefrontDjangoConfig(AppConfig):
         try:
             getattr(self.reporter, 'report_{}_distribution'.format(granularity))()
         except AttributeError:
-            raise ValueError('"{granularity}" is not valid value for WF_REPORTER_GRANULARITY'.format(
-                granularity=getattr(settings, 'WF_REPORTER_GRANULARITY', '')
-            ))
+            raise ValueError(
+                '"{granularity}" is not valid value for WF_REPORTER_GRANULARITY'
+                .format(granularity=getattr(
+                    settings,
+                    'WF_REPORTER_GRANULARITY',
+                    ''
+                ))
+            )
