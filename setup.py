@@ -15,7 +15,7 @@ with open(os.path.join(os.path.abspath(os.path.dirname(__file__)),
 
 setuptools.setup(
     name='wavefront-django-sdk-python',
-    version='0.1.0',
+    version='1.0',
     author='Wavefront by VMware',
     author_email='songhao@vmware.com',
     url='https://github.com/wavefrontHQ/wavefront-django-sdk-python',
