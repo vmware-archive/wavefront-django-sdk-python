@@ -31,7 +31,7 @@ WF_APPLICATION_TAGS = {
     'service': "{SERVICE_NAME}",
     'cluster': "{CLUSTER_NAME}",  # Optional
     'shard': "{SHARD_NAME}," , # Optional
-    'custom_tags': {"location": "Oregon", "env": "Staging"}  # Optional
+    'custom_tags': [("location", "Oregon"), ("env", "Staging")]  # Optional list of two-tuples
 }
 
 # Sending data via Direct Ingestion 
