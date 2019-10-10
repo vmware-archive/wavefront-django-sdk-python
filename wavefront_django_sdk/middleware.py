@@ -6,18 +6,24 @@ Wavefront Django Middleware.
 import logging
 import math
 import os
+import platform
 import time
 from timeit import default_timer
 
 from django.conf import settings
 from django.urls import resolve
 from django.utils.deprecation import MiddlewareMixin
+from django.utils.module_loading import import_string
 
 from django_opentracing import DjangoTracing
-from django_opentracing.tracing import initialize_global_tracer
+
+import opentracing
 
 from wavefront_django_sdk.constants import DJANGO_COMPONENT, NULL_TAG_VAL, \
     REPORTER_PREFIX, REQUEST_PREFIX, RESPONSE_PREFIX, WAVEFRONT_PROVIDED_SOURCE
+
+from wavefront_opentracing_sdk import reporting
+from wavefront_opentracing_sdk.tracer import WavefrontTracer
 
 from wavefront_pyformance.delta import delta_counter
 from wavefront_pyformance.tagged_registry import TaggedRegistry
@@ -38,12 +44,10 @@ class WavefrontMiddleware(MiddlewareMixin):
         """
         super(WavefrontMiddleware, self).__init__(get_response)
         logging.basicConfig(level=logging.INFO)
+        self.reporter = self.get_reporter()
         self.logger = logging.getLogger(__name__)
         self.MIDDLEWARE_ENABLED = False
         try:
-            self.reporter = self.get_conf('WF_REPORTER')
-            self.application_tags = self.get_conf('APPLICATION_TAGS')
-            self.tracing = self.get_conf('OPENTRACING_TRACING')
             self.is_debug = self.get_conf('WF_DEBUG') or False
             if not self.reporter or (not isinstance(
                     self.reporter, WavefrontReporter) and not self.is_debug):
@@ -51,7 +55,7 @@ class WavefrontMiddleware(MiddlewareMixin):
                     "WF_REPORTER not correctly configured!")
             elif not isinstance(self.application_tags, ApplicationTags):
                 raise AttributeError(
-                    "APPLICATION_TAGS not correctly configured!")
+                    "WF_APPLICATION_TAGS not correctly configured!")
             elif not isinstance(self.tracing, DjangoTracing):
                 raise AttributeError(
                     "OPENTRACING_TRACING not correctly configured!")
@@ -61,13 +65,13 @@ class WavefrontMiddleware(MiddlewareMixin):
                 self.CLUSTER = self.application_tags.cluster or NULL_TAG_VAL
                 self.SERVICE = self.application_tags.service or NULL_TAG_VAL
                 self.SHARD = self.application_tags.shard or NULL_TAG_VAL
-                self.reporter.prefix = REPORTER_PREFIX
                 self.reg = None
                 if self.is_debug:
                     self.reg = self.get_conf('DEBUG_REGISTRY')
                 self.reg = self.reg or TaggedRegistry()
                 self.reporter.registry = self.reg
-                if not self.get_conf('WF_DISABLE_REPORTING'):
+                if not self.get_conf('WF_DISABLE_REPORTING') \
+                        and hasattr(self.reporter, 'start'):
                     self.reporter.start()
                     self.heartbeaterService = HeartbeaterService(
                         wavefront_client=self.reporter.wavefront_client,
@@ -77,7 +81,7 @@ class WavefrontMiddleware(MiddlewareMixin):
                 self.tracing._trace_all = getattr(settings,
                                                   'OPENTRACING_TRACE_ALL',
                                                   True)
-                initialize_global_tracer(self.tracing)
+                opentracing.set_global_tracer(self.tracing.tracer)
                 self.MIDDLEWARE_ENABLED = True
         except AttributeError as e:
             self.logger.warning(e)
@@ -87,9 +91,9 @@ class WavefrontMiddleware(MiddlewareMixin):
 
     def __del__(self):
         """Destruct Wavefront Django Middleware."""
-        if self.reporter:
+        if self.reporter and hasattr(self.reporter, 'stop'):
             self.reporter.stop()
-        if self.heartbeaterService:
+        if getattr(self, 'heartbeaterService', None):
             self.heartbeaterService.close()
 
     # pylint: disable=unused-argument
@@ -342,6 +346,116 @@ class WavefrontMiddleware(MiddlewareMixin):
             tags_map['source'] = source
         return tags_map
 
+    @property
+    def application_tags(self):
+        if not hasattr(self, '_application_tags'):
+            self._application_tags = ApplicationTags(
+                **self.get_conf('WF_APPLICATION_TAGS', {})
+            )
+        return self._application_tags
+
+    @classmethod
+    def get_reporter(cls):
+        """
+        The reporter is stored on the class to avoid the
+        possibility of multiple clients.
+        :return:
+        """
+        if not hasattr(cls, '_reporter'):
+            reporter_class = cls.get_conf(
+                'WF_REPORTER',
+                'wavefront_opentracing_sdk.reporting.ConsoleReporter'
+            )
+            if not callable(reporter_class):
+                reporter_class = import_string(reporter_class)
+            reporter_kwargs = getattr(settings, 'WF_REPORTER_CONFIG', {})
+            reporter_kwargs.setdefault('source', platform.uname()[1])
+
+            try:
+                cls._reporter = reporter_class(**reporter_kwargs)
+            except TypeError:
+                raise AttributeError(
+                    '"WF_REPORTER_CONFIG" setting value is invalid for selected reporter!'   # noqa E501
+                )
+
+            granularity = cls.get_conf('WF_HISTOGRAM_GRANULARITY', 'minute')
+            if granularity is not None:
+                try:
+                    getattr(cls._reporter,
+                            'report_{}_distribution'.format(granularity)
+                            )()
+                except AttributeError:
+                    raise ValueError(
+                        'The selected reporter does not support "{granularity}" WF_HISTOGRAM_GRANULARITY'  # noqa E501
+                        .format(granularity=granularity)
+                    )
+
+            cls._reporter.prefix = REPORTER_PREFIX
+        return cls._reporter
+
+    @property
+    def tracing(self):
+        if not hasattr(self, '_tracing'):
+            opentracing_class = self.get_conf(
+                'OPENTRACING_TRACER_CALLABLE',
+                'wavefront_django_sdk.tracing.DjangoTracing'
+            )
+            kwargs = self.get_conf('OPENTRACING_TRACER_PARAMETERS', {})
+
+            if not callable(opentracing_class):
+                opentracing_class = import_string(opentracing_class)
+
+            self._tracing = opentracing_class(self.get_tracer(), **kwargs)
+        return self._tracing
+
+    def initialize_span_reporter(self, span_reporter_class):
+        if not callable(span_reporter_class):
+            span_reporter_class = import_string(span_reporter_class)
+        kwargs = {
+            'source': getattr(self.reporter, 'source', platform.uname()[1])
+        }
+        if issubclass(span_reporter_class, reporting.WavefrontSpanReporter):
+            try:
+                kwargs['client'] = self.reporter.wavefront_client
+            except AttributeError:
+                message = '"WavefrontSpanReporter" may only be used with a reporter from "wavefront_pyformance"'  # noqa E501
+                if self.is_debug:
+                    self.logger.warning(message)
+                else:
+                    raise AttributeError(message)
+        return span_reporter_class(**kwargs)
+
+    def get_span_reporter(self):
+        if not hasattr(self, '_span_reporter'):
+            span_reporter_class = self.get_conf(
+                'WF_SPAN_REPORTER',
+                'wavefront_opentracing_sdk.reporting.WavefrontSpanReporter'
+            )
+            if hasattr(span_reporter_class, '__iter__'):
+                # If the setting is iterable, make a composite reporter
+                span_reporters = [
+                    self.initialize_span_reporter(span_reporter)
+                    for span_reporter
+                    in span_reporter_class
+                ]
+                self._span_reporter = reporting.CompositeReporter(
+                    *span_reporters)
+            else:
+                self._span_reporter = self.initialize_span_reporter(
+                    span_reporter_class)
+        return self._span_reporter
+
+    def get_tracer(self, **kwargs):
+        if opentracing.is_global_tracer_registered() and \
+                isinstance(opentracing.global_tracer(), WavefrontTracer):
+            return opentracing.global_tracer()
+        else:
+            return WavefrontTracer(
+                reporter=self.get_span_reporter(),
+                application_tags=self.application_tags,
+                **self.get_conf('OPENTRACING_TRACER_PARAMETERS', {})
+            )
+
     @staticmethod
     def get_entity_name(request):
         """Get entity name from the request.
@@ -414,7 +528,7 @@ class WavefrontMiddleware(MiddlewareMixin):
         gauge.set_value(cur_val + val)
 
     @staticmethod
-    def get_conf(key):
+    def get_conf(key, default=None):
         """Get configuration from settings or env.
 
         :param key: Key of the configuration.
@@ -424,4 +538,4 @@ class WavefrontMiddleware(MiddlewareMixin):
             return settings.__getattr__(key)
         if key in os.environ:
             return os.environ[key]
-        return None
+        return default
