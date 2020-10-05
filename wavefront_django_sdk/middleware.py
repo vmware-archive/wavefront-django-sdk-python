@@ -16,15 +16,15 @@ from django.utils.deprecation import MiddlewareMixin
 from django_opentracing import DjangoTracing
 from django_opentracing.tracing import initialize_global_tracer
 
-from wavefront_django_sdk.constants import DJANGO_COMPONENT, NULL_TAG_VAL, \
-    REPORTER_PREFIX, REQUEST_PREFIX, RESPONSE_PREFIX, WAVEFRONT_PROVIDED_SOURCE
-
 from wavefront_pyformance.delta import delta_counter
 from wavefront_pyformance.tagged_registry import TaggedRegistry
 from wavefront_pyformance.wavefront_histogram import wavefront_histogram
 from wavefront_pyformance.wavefront_reporter import WavefrontReporter
 
 from wavefront_sdk.common import ApplicationTags, HeartbeaterService
+
+from .constants import DJANGO_COMPONENT, NULL_TAG_VAL, \
+    REPORTER_PREFIX, REQUEST_PREFIX, RESPONSE_PREFIX, WAVEFRONT_PROVIDED_SOURCE
 
 
 # pylint: disable=invalid-name, protected-access, too-many-instance-attributes
@@ -36,7 +36,7 @@ class WavefrontMiddleware(MiddlewareMixin):
 
         :param get_response: Method to get response
         """
-        super(WavefrontMiddleware, self).__init__(get_response)
+        super().__init__(get_response)
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         self.MIDDLEWARE_ENABLED = False
@@ -49,36 +49,34 @@ class WavefrontMiddleware(MiddlewareMixin):
                     self.reporter, WavefrontReporter) and not self.is_debug):
                 raise AttributeError(
                     "WF_REPORTER not correctly configured!")
-            elif not isinstance(self.application_tags, ApplicationTags):
+            if not isinstance(self.application_tags, ApplicationTags):
                 raise AttributeError(
                     "APPLICATION_TAGS not correctly configured!")
-            elif not isinstance(self.tracing, DjangoTracing):
+            if not isinstance(self.tracing, DjangoTracing):
                 raise AttributeError(
                     "OPENTRACING_TRACING not correctly configured!")
-            else:
-                self.APPLICATION = self.application_tags.application or \
-                                   NULL_TAG_VAL
-                self.CLUSTER = self.application_tags.cluster or NULL_TAG_VAL
-                self.SERVICE = self.application_tags.service or NULL_TAG_VAL
-                self.SHARD = self.application_tags.shard or NULL_TAG_VAL
-                self.reporter.prefix = REPORTER_PREFIX
-                self.reg = None
-                if self.is_debug:
-                    self.reg = self.get_conf('DEBUG_REGISTRY')
-                self.reg = self.reg or TaggedRegistry()
-                self.reporter.registry = self.reg
-                if not self.get_conf('WF_DISABLE_REPORTING'):
-                    self.reporter.start()
-                    self.heartbeaterService = HeartbeaterService(
-                        wavefront_client=self.reporter.wavefront_client,
-                        application_tags=self.application_tags,
-                        components=DJANGO_COMPONENT,
-                        source=self.reporter.source)
-                self.tracing._trace_all = getattr(settings,
-                                                  'OPENTRACING_TRACE_ALL',
-                                                  True)
-                initialize_global_tracer(self.tracing)
-                self.MIDDLEWARE_ENABLED = True
+            self.APPLICATION = self.application_tags.application \
+                or NULL_TAG_VAL
+            self.CLUSTER = self.application_tags.cluster or NULL_TAG_VAL
+            self.SERVICE = self.application_tags.service or NULL_TAG_VAL
+            self.SHARD = self.application_tags.shard or NULL_TAG_VAL
+            self.reporter.prefix = REPORTER_PREFIX
+            self.reg = None
+            if self.is_debug:
+                self.reg = self.get_conf('DEBUG_REGISTRY')
+            self.reg = self.reg or TaggedRegistry()
+            self.reporter.registry = self.reg
+            if not self.get_conf('WF_DISABLE_REPORTING'):
+                self.reporter.start()
+                self.heartbeaterService = HeartbeaterService(
+                    wavefront_client=self.reporter.wavefront_client,
+                    application_tags=self.application_tags,
+                    components=DJANGO_COMPONENT,
+                    source=self.reporter.source)
+            self.tracing._trace_all = getattr(settings,
+                                              'OPENTRACING_TRACE_ALL', True)
+            initialize_global_tracer(self.tracing)
+            self.MIDDLEWARE_ENABLED = True
         except AttributeError as e:
             self.logger.warning(e)
         finally:
