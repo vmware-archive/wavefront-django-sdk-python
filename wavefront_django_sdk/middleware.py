@@ -22,6 +22,9 @@ from wavefront_pyformance.wavefront_histogram import wavefront_histogram
 from wavefront_pyformance.wavefront_reporter import WavefrontReporter
 
 from wavefront_sdk.common import ApplicationTags, HeartbeaterService
+from wavefront_sdk.common.constants import SDK_METRIC_PREFIX
+from wavefront_sdk.common.metrics.registry import WavefrontSdkMetricsRegistry
+from wavefront_sdk.common.utils import get_sem_ver
 
 from .constants import DJANGO_COMPONENT, NULL_TAG_VAL, \
     REPORTER_PREFIX, REQUEST_PREFIX, RESPONSE_PREFIX, WAVEFRONT_PROVIDED_SOURCE
@@ -45,6 +48,7 @@ class WavefrontMiddleware(MiddlewareMixin):
             self.application_tags = self.get_conf('APPLICATION_TAGS')
             self.tracing = self.get_conf('OPENTRACING_TRACING')
             self.is_debug = self.get_conf('WF_DEBUG') or False
+            self._sdk_metrics_registry = None
             if not self.reporter or (not isinstance(
                     self.reporter, WavefrontReporter) and not self.is_debug):
                 raise AttributeError(
@@ -77,6 +81,16 @@ class WavefrontMiddleware(MiddlewareMixin):
                                               'OPENTRACING_TRACE_ALL', True)
             initialize_global_tracer(self.tracing)
             self.MIDDLEWARE_ENABLED = True
+            # Report internal metrics with prefix ~sdk.python.django.sender
+            if self.get_conf('ENABLE_INTERNAL_REPORT') is not False:
+                self._sdk_metrics_registry = WavefrontSdkMetricsRegistry(
+                    wf_metric_sender=self.reporter.wavefront_client,
+                    source=self.reporter.source,
+                    tags=dict(self.application_tags.get_as_list()),
+                    prefix='{}.django.sender'.format(SDK_METRIC_PREFIX))
+            self._sdk_metrics_registry.new_gauge(
+                'version',
+                lambda: get_sem_ver('wavefront-django-sdk-python'))
         except AttributeError as e:
             self.logger.warning(e)
         finally:
@@ -85,6 +99,8 @@ class WavefrontMiddleware(MiddlewareMixin):
 
     def __del__(self):
         """Destruct Wavefront Django Middleware."""
+        if self._sdk_metrics_registry:
+            self._sdk_metrics_registry.close(timeout_secs=1)
         if self.reporter:
             self.reporter.stop()
         if self.heartbeaterService:

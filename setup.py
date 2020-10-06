@@ -15,7 +15,7 @@ with open(os.path.join(os.path.abspath(os.path.dirname(__file__)),
 
 setuptools.setup(
     name='wavefront-django-sdk-python',
-    version='1.1',
+    version='1.1.0',
     author='Wavefront by VMware',
     author_email='songhao@vmware.com',
     url='https://github.com/wavefrontHQ/wavefront-django-sdk-python',
@@ -41,6 +41,7 @@ setuptools.setup(
     install_requires=(
         'django>=1.11',
         'django-opentracing>=1.1',
-        'wavefront-opentracing-sdk-python>=1.2'
+        'wavefront-opentracing-sdk-python>=1.2',
+        'wavefront-sdk-python>=1.7.4',
     )
 )
