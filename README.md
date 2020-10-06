@@ -38,7 +38,7 @@ APPLICATION_TAGS = ApplicationTags(
     service="{SERVICE_NAME}",
     cluster="{CLUSTER_NAME}",  # Optional
     shard="{SHARD_NAME}," , # Optional
-    custom_tags={"location": "Oregon", "env": "Staging"}  # Optional
+    custom_tags=[("location", "Oregon"), ("env", "Staging")]  # Optional
 )
 
 # Sending data via Direct Ingestion
