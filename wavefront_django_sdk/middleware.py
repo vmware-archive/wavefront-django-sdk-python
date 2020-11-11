@@ -122,13 +122,13 @@ class WavefrontMiddleware(MiddlewareMixin):
         request.wf_cpu_nanos = time.clock()
 
         entity_name = self.get_entity_name(request)
-        func_name = resolve(request.path_info).func.__name__
-        module_name = resolve(request.path_info).func.__module__
+        request.wf_func_name = view_func.__name__
+        request.wf_module_name = view_func.__module__
         self.update_gauge(
             registry=self.reg,
             key=self.get_metric_name(entity_name, request) + ".inflight",
-            tags=self.get_tags_map(module_name=module_name,
-                                   func_name=func_name),
+            tags=self.get_tags_map(module_name=request.wf_module_name,
+                                   func_name=request.wf_func_name),
             val=1
         )
         self.update_gauge(
@@ -161,20 +161,25 @@ class WavefrontMiddleware(MiddlewareMixin):
         if not self.MIDDLEWARE_ENABLED:
             return response
         entity_name = self.get_entity_name(request)
-        func_name = resolve(request.path_info).func.__name__
-        module_name = resolve(request.path_info).func.__module__
 
         if self.tracing:
             self.tracing._finish_tracing(request, response=response)
 
-        self.update_gauge(
-            registry=self.reg,
-            key=self.get_metric_name(entity_name, request) + ".inflight",
-            tags=self.get_tags_map(
-                module_name=module_name,
-                func_name=func_name),
-            val=-1
-        )
+        if hasattr(request, 'wf_func_name'):
+            self.update_gauge(
+                registry=self.reg,
+                key=self.get_metric_name(entity_name, request) + ".inflight",
+                tags=self.get_tags_map(
+                    module_name=request.wf_module_name,
+                    func_name=request.wf_func_name),
+                val=-1
+            )
+            module_name = request.wf_module_name
+            func_name = request.wf_func_name
+        else:
+            module_name = None
+            func_name = None
+
         self.update_gauge(
             registry=self.reg,
             key="total_requests.inflight",
