@@ -87,8 +87,7 @@ class WavefrontMiddleware(MiddlewareMixin):
                     wf_metric_sender=self.reporter.wavefront_client,
                     source=self.reporter.source,
                     tags=dict(self.application_tags.get_as_list()),
-                    # pylint: disable=C0209
-                    prefix='{}.django'.format(SDK_METRIC_PREFIX))
+                    prefix=f'{SDK_METRIC_PREFIX}.django')
             self._sdk_metrics_registry.new_gauge(
                 'version',
                 lambda: get_sem_ver('wavefront-django-sdk-python'))
