@@ -40,4 +40,4 @@ jobs:
       run: python -m pydocstyle
 
     - name: Check if version is updated
-      run: test -n "$(git diff -G version= master HEAD setup.py)"
+      run: test -n "$(git diff -G version= origin/master HEAD setup.py)"
