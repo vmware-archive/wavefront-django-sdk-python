@@ -87,7 +87,7 @@ class WavefrontMiddleware(MiddlewareMixin):
                     wf_metric_sender=self.reporter.wavefront_client,
                     source=self.reporter.source,
                     tags=dict(self.application_tags.get_as_list()),
-                    prefix='{}.django'.format(SDK_METRIC_PREFIX))
+                    prefix=f'{SDK_METRIC_PREFIX}.django')
             self._sdk_metrics_registry.new_gauge(
                 'version',
                 lambda: get_sem_ver('wavefront-django-sdk-python'))
@@ -119,7 +119,7 @@ class WavefrontMiddleware(MiddlewareMixin):
         if not self.MIDDLEWARE_ENABLED:
             return
         request.wf_start_timestamp = default_timer()
-        request.wf_cpu_nanos = time.clock()
+        request.wf_cpu_nanos = time.clock()  # pylint: disable=W1505
 
         entity_name = self.get_entity_name(request)
         func_name = resolve(request.path_info).func.__name__
@@ -319,6 +319,7 @@ class WavefrontMiddleware(MiddlewareMixin):
         # django.server.response.style._id_.make.summary.GET.200.total_time.count
         if hasattr(request, 'wf_start_timestamp'):
             timestamp_duration = default_timer() - request.wf_start_timestamp
+            # pylint: disable=W1505
             cpu_nanos_duration = time.clock() - request.wf_cpu_nanos
             wavefront_histogram(self.reg, response_metric_key + ".latency",
                                 tags=complete_tags_map).add(timestamp_duration)
