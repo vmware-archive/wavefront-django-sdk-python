@@ -1,3 +1,7 @@
+```
+VMware has ended active development of this project, this repository will no longer be updated.
+```
+
 # Wavefront Django SDK
 
 This SDK provides support for reporting out of the box metric, histograms and tracing from your Django based  application. That data is reported to Wavefront via proxy or direct ingestion. That data will help you understand how your application is performing in production.
